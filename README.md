@@ -2,6 +2,8 @@
 
 A human-crafted interface layer for ChatGPT with a login screen, BYOK support (bring your own OpenAI key), prompt presets, and a fine-tune studio.
 
+Live app: https://unlockedgpt.vercel.app
+
 ## Features
 
 - Local login page (client-side only)
