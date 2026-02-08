@@ -1,4 +1,5 @@
 import { getOpenAIClient } from "@/lib/openai";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 
 type ChatMessage = {
   role: "user" | "assistant";
@@ -102,9 +103,15 @@ export async function POST(req: Request) {
       }
 
       const client = getOpenAIClient({ apiKey, baseURL });
-      const messages = systemPrompt
-        ? [{ role: "system", content: systemPrompt }, ...body.messages]
-        : body.messages;
+      const messages: ChatCompletionMessageParam[] = systemPrompt
+        ? [{ role: "system", content: systemPrompt }]
+        : [];
+      messages.push(
+        ...body.messages.map((message) => ({
+          role: message.role,
+          content: message.content,
+        })),
+      );
 
       const response = await client.chat.completions.create({
         model,
