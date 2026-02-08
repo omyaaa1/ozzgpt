@@ -1,6 +1,6 @@
 # OZZGPT Console
 
-A human-crafted interface layer for ChatGPT with a login screen, BYOK support (bring your own OpenAI key), prompt presets, and a fine-tune studio.
+A human-crafted interface layer for ChatGPT with a login screen, BYOK support (bring your own OpenAI key), prompt presets, a fine-tune studio, and a Puter SDK demo.
 
 Live app: https://unlockedgpt.vercel.app
 
@@ -12,6 +12,7 @@ Live app: https://unlockedgpt.vercel.app
 - Prompt studio with presets
 - Fine-tune dataset builder with JSONL export
 - Fine-tune job creation from the UI
+- Puter SDK demo call
 
 ## Quick Start
 
