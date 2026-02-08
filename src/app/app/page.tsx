@@ -1,0 +1,724 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+
+type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+type PromptPreset = {
+  id: string;
+  name: string;
+  content: string;
+};
+
+type TrainingExample = {
+  id: string;
+  user: string;
+  assistant: string;
+};
+
+const defaultPrompt = `You are UnlockedGPT, a calm, direct assistant.
+You speak with confident brevity and give actionable steps.
+If the user asks for a build plan, you respond with a crisp plan and then ask a concrete question.`;
+
+const apiKeyStorage = "ozzgpt:apiKey";
+const userStorage = "ozzgpt:user";
+
+export default function AppPage() {
+  const router = useRouter();
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    {
+      role: "assistant",
+      content:
+        "Welcome to UnlockedGPT. Drop your prompt, and tune the system instructions on the right.",
+    },
+  ]);
+  const [input, setInput] = useState("");
+  const [systemPrompt, setSystemPrompt] = useState(defaultPrompt);
+  const [model, setModel] = useState("gpt-4.1-mini");
+  const [temperature, setTemperature] = useState(0.6);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [hasServerKey, setHasServerKey] = useState<boolean | null>(null);
+  const [healthError, setHealthError] = useState<string | null>(null);
+
+  const [apiKey, setApiKey] = useState("");
+  const [showKeyModal, setShowKeyModal] = useState(false);
+
+  const [presetName, setPresetName] = useState("");
+  const [presets, setPresets] = useState<PromptPreset[]>([]);
+
+  const [trainingExamples, setTrainingExamples] = useState<TrainingExample[]>([
+    {
+      id: "example-1",
+      user: "Explain the project architecture in 3 bullets.",
+      assistant:
+        "The UI is a Next.js client page.\nThe server routes handle OpenAI requests.\nPrompt settings live in local storage.",
+    },
+  ]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [trainingFileId, setTrainingFileId] = useState("");
+  const [fineTuneModel, setFineTuneModel] = useState("gpt-4.1-mini");
+  const [creatingJob, setCreatingJob] = useState(false);
+  const [jobId, setJobId] = useState("");
+  const [jobStatus, setJobStatus] = useState("");
+
+  const endRef = useRef<HTMLDivElement | null>(null);
+  const draftKey = "unlockedgpt:prompt";
+  const presetKey = "unlockedgpt:presets";
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(draftKey);
+    if (stored) {
+      setSystemPrompt(stored);
+    }
+    const storedPresets = window.localStorage.getItem(presetKey);
+    if (storedPresets) {
+      try {
+        const parsed = JSON.parse(storedPresets) as PromptPreset[];
+        setPresets(parsed);
+      } catch {
+        setPresets([]);
+      }
+    }
+    const storedKey = window.localStorage.getItem(apiKeyStorage);
+    if (storedKey) {
+      setApiKey(storedKey);
+      setShowKeyModal(false);
+    } else {
+      setShowKeyModal(true);
+    }
+    const storedUser = window.localStorage.getItem(userStorage);
+    if (!storedUser) {
+      router.replace("/login");
+    }
+  }, [router]);
+
+  useEffect(() => {
+    window.localStorage.setItem(draftKey, systemPrompt);
+  }, [systemPrompt]);
+
+  useEffect(() => {
+    window.localStorage.setItem(presetKey, JSON.stringify(presets));
+  }, [presets]);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
+
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const res = await fetch("/api/health");
+        const data = await res.json();
+        setHasServerKey(Boolean(data?.hasServerKey));
+        setHealthError(null);
+      } catch (err) {
+        setHasServerKey(false);
+        setHealthError(
+          err instanceof Error ? err.message : "Health check failed.",
+        );
+      }
+    };
+    void checkHealth();
+  }, []);
+
+  const canSend = useMemo(
+    () => input.trim().length > 0 && !loading,
+    [input, loading],
+  );
+
+  const jsonl = useMemo(() => {
+    return trainingExamples
+      .filter((example) => example.user.trim() && example.assistant.trim())
+      .map((example) =>
+        JSON.stringify({
+          messages: [
+            { role: "user", content: example.user.trim() },
+            { role: "assistant", content: example.assistant.trim() },
+          ],
+        }),
+      )
+      .join("\n");
+  }, [trainingExamples]);
+
+  const sendMessage = async () => {
+    if (!canSend) return;
+    setError(null);
+    const nextMessage: ChatMessage = { role: "user", content: input.trim() };
+    setMessages((prev) => [...prev, nextMessage]);
+    setInput("");
+    setLoading(true);
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [...messages, nextMessage],
+          systemPrompt,
+          model,
+          temperature,
+          apiKey: apiKey || undefined,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error ?? "Request failed.");
+      }
+
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: data.text ?? "" },
+      ]);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Something went wrong.";
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const savePreset = () => {
+    if (!presetName.trim()) return;
+    const id = `preset-${Date.now()}`;
+    const next: PromptPreset = {
+      id,
+      name: presetName.trim(),
+      content: systemPrompt,
+    };
+    setPresets((prev) => [next, ...prev]);
+    setPresetName("");
+  };
+
+  const applyPreset = (preset: PromptPreset) => {
+    setSystemPrompt(preset.content);
+  };
+
+  const deletePreset = (id: string) => {
+    setPresets((prev) => prev.filter((preset) => preset.id !== id));
+  };
+
+  const addExample = () => {
+    setTrainingExamples((prev) => [
+      ...prev,
+      {
+        id: `example-${Date.now()}`,
+        user: "",
+        assistant: "",
+      },
+    ]);
+  };
+
+  const updateExample = (
+    id: string,
+    key: "user" | "assistant",
+    value: string,
+  ) => {
+    setTrainingExamples((prev) =>
+      prev.map((example) =>
+        example.id === id ? { ...example, [key]: value } : example,
+      ),
+    );
+  };
+
+  const removeExample = (id: string) => {
+    setTrainingExamples((prev) => prev.filter((example) => example.id !== id));
+  };
+
+  const downloadJsonl = () => {
+    if (!jsonl.trim()) return;
+    const blob = new Blob([jsonl], { type: "application/jsonl" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "training.jsonl";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const uploadJsonl = async () => {
+    if (!jsonl.trim()) return;
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const response = await fetch("/api/fine-tune/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonl, apiKey: apiKey || undefined }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error ?? "Upload failed.");
+      }
+      setTrainingFileId(data.fileId ?? "");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Upload failed.";
+      setUploadError(message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const createFineTuneJob = async () => {
+    if (!trainingFileId.trim() || !fineTuneModel.trim()) return;
+    setCreatingJob(true);
+    setUploadError(null);
+    try {
+      const response = await fetch("/api/fine-tune/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          trainingFileId: trainingFileId.trim(),
+          model: fineTuneModel.trim(),
+          apiKey: apiKey || undefined,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error ?? "Fine-tune job failed.");
+      }
+      setJobId(data.jobId ?? "");
+      setJobStatus(data.status ?? "");
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Fine-tune job failed.";
+      setUploadError(message);
+    } finally {
+      setCreatingJob(false);
+    }
+  };
+
+  const handleSaveKey = () => {
+    if (!apiKey.trim()) return;
+    window.localStorage.setItem(apiKeyStorage, apiKey.trim());
+    setShowKeyModal(false);
+  };
+
+  const handleClearKey = () => {
+    window.localStorage.removeItem(apiKeyStorage);
+    setApiKey("");
+    setShowKeyModal(true);
+  };
+
+  const handleSignOut = () => {
+    window.localStorage.removeItem(userStorage);
+    router.replace("/login");
+  };
+
+  return (
+    <div className="min-h-screen px-6 py-10 md:px-12">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-10">
+        <header className="flex flex-col gap-6 rounded-3xl border border-[var(--border)] bg-[var(--panel)] px-8 py-10 shadow-[var(--shadow)]">
+          <div className="flex flex-col gap-3">
+            <span className="w-fit rounded-full border border-[var(--border)] bg-white/70 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">
+              Prompt Trained Interface
+            </span>
+            <h1 className="text-4xl font-semibold tracking-tight text-[var(--ink)] md:text-5xl">
+              UnlockedGPT Interface Layer
+            </h1>
+            <p className="max-w-2xl text-base text-[var(--muted)] md:text-lg">
+              A human-crafted application layer for ChatGPT. Tune behavior with
+              your prompt, ship an elegant GitHub-ready interface, and iterate
+              fast.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-sm text-[var(--muted)]">
+            <span className="rounded-full border border-[var(--border)] bg-white/70 px-3 py-1">
+              Built with Next.js + Tailwind
+            </span>
+            <span className="rounded-full border border-[var(--border)] bg-white/70 px-3 py-1">
+              OpenAI API Route
+            </span>
+            <span className="rounded-full border border-[var(--border)] bg-white/70 px-3 py-1">
+              Local Prompt Memory
+            </span>
+            <span className="rounded-full border border-[var(--border)] bg-white/70 px-3 py-1">
+              Fine-tune Dataset Builder
+            </span>
+            <span
+              className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${
+                apiKey
+                  ? "bg-emerald-500 text-white"
+                  : "bg-amber-500 text-white"
+              }`}
+            >
+              {apiKey ? "BYOK Active" : "BYOK Missing"}
+            </span>
+            <button
+              className="rounded-full border border-[var(--border)] bg-white/70 px-3 py-1 text-xs font-semibold text-[var(--muted)]"
+              onClick={handleClearKey}
+            >
+              Clear Key
+            </button>
+            <button
+              className="rounded-full border border-[var(--border)] bg-white/70 px-3 py-1 text-xs font-semibold text-[var(--muted)]"
+              onClick={handleSignOut}
+            >
+              Sign Out
+            </button>
+          </div>
+        </header>
+
+        <main className="grid gap-8 lg:grid-cols-[1.3fr_0.7fr]">
+          <section className="flex h-full flex-col rounded-3xl border border-[var(--border)] bg-white/70 p-6 shadow-[var(--shadow)] backdrop-blur">
+            <div className="flex items-center justify-between border-b border-[var(--border)] pb-4">
+              <div>
+                <h2 className="text-xl font-semibold text-[var(--ink)]">
+                  Dialogue
+                </h2>
+                <p className="text-sm text-[var(--muted)]">
+                  The assistant responds using your prompt settings.
+                </p>
+              </div>
+              <span className="rounded-full bg-[var(--accent)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-white">
+                Live
+              </span>
+            </div>
+
+            <div className="mt-5 flex flex-1 flex-col gap-4 overflow-hidden">
+              <div className="flex flex-1 flex-col gap-4 overflow-y-auto pr-2">
+                {messages.map((msg, index) => (
+                  <div
+                    key={`${msg.role}-${index}`}
+                    className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed md:text-base ${
+                      msg.role === "user"
+                        ? "ml-auto bg-[var(--accent)] text-white"
+                        : "bg-[var(--panel)] text-[var(--ink)]"
+                    }`}
+                  >
+                    {msg.content}
+                  </div>
+                ))}
+                {loading && (
+                  <div className="max-w-[70%] rounded-2xl bg-[var(--panel)] px-4 py-3 text-sm text-[var(--muted)]">
+                    Thinking...
+                  </div>
+                )}
+                <div ref={endRef} />
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-[var(--border)] bg-white/90 p-4">
+                <textarea
+                  className="min-h-[96px] w-full resize-none bg-transparent text-sm text-[var(--ink)] outline-none md:text-base"
+                  placeholder="Ask for a build, a strategy, or a deep dive..."
+                  value={input}
+                  onChange={(event) => setInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      void sendMessage();
+                    }
+                  }}
+                />
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs text-[var(--muted)]">
+                    Press Enter to send - Shift + Enter for a new line
+                  </p>
+                  <button
+                    className="rounded-full bg-[var(--accent-2)] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+                    onClick={() => void sendMessage()}
+                    disabled={!canSend}
+                  >
+                    {loading ? "Sending..." : "Send"}
+                  </button>
+                </div>
+                {error && (
+                  <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">
+                    {error}
+                  </p>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <aside className="flex flex-col gap-6">
+            <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-6 shadow-[var(--shadow)]">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-[var(--ink)]">
+                    Prompt Studio
+                  </h3>
+                  <p className="mt-1 text-sm text-[var(--muted)]">
+                    This is your training layer. Edit the system prompt to shape
+                    tone, rules, and output quality.
+                  </p>
+                </div>
+                <span
+                  className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${
+                    hasServerKey
+                      ? "bg-emerald-500 text-white"
+                      : "bg-amber-500 text-white"
+                  }`}
+                >
+                  {hasServerKey ? "Server Key" : "No Server Key"}
+                </span>
+              </div>
+              {healthError && (
+                <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                  {healthError}
+                </p>
+              )}
+              <textarea
+                className="mt-4 min-h-[200px] w-full rounded-2xl border border-[var(--border)] bg-white/80 p-3 text-sm text-[var(--ink)] outline-none"
+                value={systemPrompt}
+                onChange={(event) => setSystemPrompt(event.target.value)}
+              />
+              <div className="mt-4 grid gap-3">
+                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">
+                  Model
+                </label>
+                <input
+                  className="rounded-2xl border border-[var(--border)] bg-white/80 px-3 py-2 text-sm text-[var(--ink)]"
+                  value={model}
+                  onChange={(event) => setModel(event.target.value)}
+                  placeholder="gpt-4.1-mini"
+                />
+                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">
+                  Temperature
+                </label>
+                <input
+                  className="w-full accent-[var(--accent)]"
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={temperature}
+                  onChange={(event) => setTemperature(Number(event.target.value))}
+                />
+                <div className="text-sm text-[var(--muted)]">
+                  Current: {temperature.toFixed(2)}
+                </div>
+              </div>
+
+              <div className="mt-6 grid gap-3 border-t border-[var(--border)] pt-4">
+                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">
+                  Save Preset
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    className="flex-1 rounded-2xl border border-[var(--border)] bg-white/80 px-3 py-2 text-sm text-[var(--ink)]"
+                    placeholder="Preset name"
+                    value={presetName}
+                    onChange={(event) => setPresetName(event.target.value)}
+                  />
+                  <button
+                    className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+                    onClick={savePreset}
+                  >
+                    Save
+                  </button>
+                </div>
+                {presets.length > 0 ? (
+                  <div className="grid gap-2">
+                    {presets.map((preset) => (
+                      <div
+                        key={preset.id}
+                        className="flex items-center justify-between rounded-2xl border border-[var(--border)] bg-white/70 px-3 py-2 text-sm"
+                      >
+                        <button
+                          className="text-left font-semibold text-[var(--ink)]"
+                          onClick={() => applyPreset(preset)}
+                        >
+                          {preset.name}
+                        </button>
+                        <button
+                          className="text-xs text-[var(--muted)]"
+                          onClick={() => deletePreset(preset.id)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-[var(--muted)]">No presets yet.</p>
+                )}
+              </div>
+            </section>
+
+            <section className="rounded-3xl border border-[var(--border)] bg-white/80 p-6 shadow-[var(--shadow)]">
+              <h3 className="text-lg font-semibold text-[var(--ink)]">
+                Prompt Training Tips
+              </h3>
+              <ul className="mt-3 space-y-2 text-sm text-[var(--muted)]">
+                <li>Be explicit about tone and formatting preferences.</li>
+                <li>Define what the assistant should refuse or avoid.</li>
+                <li>Give a 3-5 line example of the ideal response style.</li>
+              </ul>
+            </section>
+          </aside>
+        </main>
+
+        <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-6 shadow-[var(--shadow)]">
+          <div className="flex flex-wrap items-start justify-between gap-4 border-b border-[var(--border)] pb-4">
+            <div>
+              <h2 className="text-2xl font-semibold text-[var(--ink)]">
+                Fine-tune Studio
+              </h2>
+              <p className="mt-1 text-sm text-[var(--muted)]">
+                Build a JSONL dataset, upload it to OpenAI, and create a
+                fine-tune job.
+              </p>
+            </div>
+            <button
+              className="rounded-full border border-[var(--border)] bg-white/80 px-4 py-2 text-sm font-semibold text-[var(--ink)]"
+              onClick={addExample}
+            >
+              Add Example
+            </button>
+          </div>
+
+          <div className="mt-6 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+            <div className="grid gap-4">
+              {trainingExamples.map((example) => (
+                <div
+                  key={example.id}
+                  className="rounded-2xl border border-[var(--border)] bg-white/80 p-4"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-sm font-semibold text-[var(--ink)]">
+                      Training Pair
+                    </h4>
+                    <button
+                      className="text-xs text-[var(--muted)]"
+                      onClick={() => removeExample(example.id)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <textarea
+                    className="mt-3 min-h-[88px] w-full rounded-2xl border border-[var(--border)] bg-white/90 p-3 text-sm text-[var(--ink)] outline-none"
+                    placeholder="User message"
+                    value={example.user}
+                    onChange={(event) =>
+                      updateExample(example.id, "user", event.target.value)
+                    }
+                  />
+                  <textarea
+                    className="mt-3 min-h-[88px] w-full rounded-2xl border border-[var(--border)] bg-white/90 p-3 text-sm text-[var(--ink)] outline-none"
+                    placeholder="Assistant response"
+                    value={example.assistant}
+                    onChange={(event) =>
+                      updateExample(example.id, "assistant", event.target.value)
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="rounded-2xl border border-[var(--border)] bg-white/80 p-4">
+              <h4 className="text-sm font-semibold text-[var(--ink)]">
+                JSONL Preview
+              </h4>
+              <textarea
+                className="mt-3 min-h-[240px] w-full rounded-2xl border border-[var(--border)] bg-white/90 p-3 text-xs text-[var(--ink)] outline-none"
+                value={jsonl}
+                readOnly
+              />
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  className="rounded-full bg-[var(--accent)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                  onClick={downloadJsonl}
+                  disabled={!jsonl.trim()}
+                >
+                  Download JSONL
+                </button>
+                <button
+                  className="rounded-full border border-[var(--border)] bg-white/90 px-4 py-2 text-xs font-semibold text-[var(--ink)] disabled:opacity-50"
+                  onClick={uploadJsonl}
+                  disabled={!jsonl.trim() || uploading}
+                >
+                  {uploading ? "Uploading..." : "Upload to OpenAI"}
+                </button>
+              </div>
+              {uploadError && (
+                <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">
+                  {uploadError}
+                </p>
+              )}
+              <div className="mt-4 grid gap-3">
+                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">
+                  Training File ID
+                </label>
+                <input
+                  className="rounded-2xl border border-[var(--border)] bg-white/90 px-3 py-2 text-sm text-[var(--ink)]"
+                  placeholder="file-xxxxxxxxxxxx"
+                  value={trainingFileId}
+                  onChange={(event) => setTrainingFileId(event.target.value)}
+                />
+                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">
+                  Fine-tune Model
+                </label>
+                <input
+                  className="rounded-2xl border border-[var(--border)] bg-white/90 px-3 py-2 text-sm text-[var(--ink)]"
+                  placeholder="gpt-4.1-mini"
+                  value={fineTuneModel}
+                  onChange={(event) => setFineTuneModel(event.target.value)}
+                />
+                <button
+                  className="rounded-full bg-[var(--accent-2)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                  onClick={createFineTuneJob}
+                  disabled={
+                    !trainingFileId.trim() ||
+                    !fineTuneModel.trim() ||
+                    creatingJob
+                  }
+                >
+                  {creatingJob ? "Creating..." : "Create Fine-tune Job"}
+                </button>
+                {jobId && (
+                  <div className="rounded-2xl border border-[var(--border)] bg-white/90 px-3 py-2 text-xs text-[var(--muted)]">
+                    Job: {jobId} {jobStatus ? `(${jobStatus})` : ""}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      {showKeyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-lg rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-6 shadow-[var(--shadow)]">
+            <h2 className="text-xl font-semibold text-[var(--ink)]">
+              Add Your OpenAI API Key
+            </h2>
+            <p className="mt-2 text-sm text-[var(--muted)]">
+              Your key stays in your browser storage. The app sends it to the
+              server only for OpenAI requests.
+            </p>
+            <input
+              className="mt-4 w-full rounded-2xl border border-[var(--border)] bg-white/90 px-3 py-2 text-sm text-[var(--ink)]"
+              placeholder="sk-..."
+              value={apiKey}
+              onChange={(event) => setApiKey(event.target.value)}
+            />
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+                onClick={handleSaveKey}
+              >
+                Save Key
+              </button>
+              <button
+                className="rounded-full border border-[var(--border)] bg-white/80 px-4 py-2 text-sm font-semibold text-[var(--ink)]"
+                onClick={() => setShowKeyModal(false)}
+              >
+                Skip for now
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

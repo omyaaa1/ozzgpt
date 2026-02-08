@@ -1,13 +1,15 @@
-# UnlockedGPT Interface
+# OZZGPT Console
 
-A clean, human-crafted application layer for ChatGPT. It ships with a prompt studio for training-by-prompting, a modern UI, and a server route that calls the OpenAI API safely from the backend.
+A human-crafted interface layer for ChatGPT with a login screen, BYOK support (bring your own OpenAI key), prompt presets, and a fine-tune studio.
 
 ## Features
 
-- Prompt studio with local prompt memory
+- Local login page (client-side only)
+- BYOK key vault stored in the browser
 - Chat UI with temperature and model controls
-- Server-side OpenAI API proxy
-- Next.js App Router + Tailwind setup
+- Prompt studio with presets
+- Fine-tune dataset builder with JSONL export
+- Fine-tune job creation from the UI
 
 ## Quick Start
 
@@ -18,20 +20,39 @@ npm run dev
 
 Open `http://localhost:3000`.
 
+## BYOK (Bring Your Own Key)
+
+Users paste their own OpenAI API key in the app. The key is stored in browser storage and sent to the server only when making OpenAI requests. It is not stored on the server.
+
+If you want to run a shared server key instead, set `OPENAI_API_KEY` in `.env.local` and skip BYOK.
+
 ## Environment
 
-Create a `.env.local` file and add your OpenAI key:
+Optional server key (for shared usage):
 
 ```bash
 OPENAI_API_KEY=your_key_here
 ```
 
-## Project Structure
+Restart `npm run dev` after changing env variables.
 
-- `src/app/page.tsx` — UI + prompt studio
-- `src/app/api/chat/route.ts` — OpenAI API route
-- `src/app/globals.css` — design system + global styles
+## Fine-tuning
+
+1. Add training pairs in the Fine-tune Studio.
+2. Download or upload the JSONL dataset.
+3. Use the file id to create a fine-tune job.
+
+Note: Only certain models support fine-tuning. Update the model field to a supported one for your account.
+
+## Routes
+
+- `/` - Landing page
+- `/login` - Local login
+- `/app` - Chat + prompt training + fine-tune studio
+- `/api/chat` - OpenAI Responses API proxy
+- `/api/fine-tune/upload` - Upload JSONL dataset
+- `/api/fine-tune/create` - Create a fine-tune job
 
 ## Deployment
 
-Any Next.js host will work. If you use Vercel, add the `OPENAI_API_KEY` environment variable in your project settings.
+Deploy on Vercel or any Next.js host. Add `OPENAI_API_KEY` if you want a shared server key.

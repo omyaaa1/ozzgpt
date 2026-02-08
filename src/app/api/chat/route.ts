@@ -1,5 +1,7 @@
+import { getOpenAIClient } from "@/lib/openai";
+
 type ChatMessage = {
-  role: "user" | "assistant" | "system" | "developer";
+  role: "user" | "assistant";
   content: string;
 };
 
@@ -8,19 +10,12 @@ type ChatRequest = {
   systemPrompt?: string;
   model?: string;
   temperature?: number;
+  apiKey?: string;
 };
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return Response.json(
-      { error: "Missing OPENAI_API_KEY on the server." },
-      { status: 500 },
-    );
-  }
-
   let body: ChatRequest | null = null;
   try {
     body = (await req.json()) as ChatRequest;
@@ -36,39 +31,30 @@ export async function POST(req: Request) {
   }
 
   const systemPrompt = body.systemPrompt?.trim();
-  const messages = systemPrompt
-    ? [{ role: "developer", content: systemPrompt }, ...body.messages]
-    : body.messages;
+  const model = body.model ?? "gpt-4.1-mini";
+  const temperature =
+    typeof body.temperature === "number" ? body.temperature : 0.6;
 
-  const payload = {
-    model: body.model ?? "gpt-4.1-mini",
-    messages,
-    temperature:
-      typeof body.temperature === "number" ? body.temperature : 0.6,
-  };
+  try {
+    const client = getOpenAIClient(body.apiKey);
+    const response = await client.responses.create({
+      model,
+      instructions: systemPrompt,
+      temperature,
+      input: body.messages.map((message) => ({
+        role: message.role,
+        content: message.content,
+      })),
+    });
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    return Response.json(
-      { error: data?.error?.message ?? "OpenAI API error." },
-      { status: response.status },
-    );
+    return Response.json({
+      text: response.output_text ?? "",
+      usage: response.usage ?? null,
+      model: response.model ?? model,
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "OpenAI API error.";
+    return Response.json({ error: message }, { status: 500 });
   }
-
-  const text = data?.choices?.[0]?.message?.content ?? "";
-  return Response.json({
-    text,
-    usage: data?.usage ?? null,
-    model: data?.model ?? payload.model,
-  });
 }
