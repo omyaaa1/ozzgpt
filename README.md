@@ -1,36 +1,37 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# UnlockedGPT Interface
 
-## Getting Started
+A clean, human-crafted application layer for ChatGPT. It ships with a prompt studio for training-by-prompting, a modern UI, and a server route that calls the OpenAI API safely from the backend.
 
-First, run the development server:
+## Features
+
+- Prompt studio with local prompt memory
+- Chat UI with temperature and model controls
+- Server-side OpenAI API proxy
+- Next.js App Router + Tailwind setup
+
+## Quick Start
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Environment
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Create a `.env.local` file and add your OpenAI key:
 
-## Learn More
+```bash
+OPENAI_API_KEY=your_key_here
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Project Structure
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `src/app/page.tsx` — UI + prompt studio
+- `src/app/api/chat/route.ts` — OpenAI API route
+- `src/app/globals.css` — design system + global styles
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Deployment
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Any Next.js host will work. If you use Vercel, add the `OPENAI_API_KEY` environment variable in your project settings.
