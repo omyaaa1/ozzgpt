@@ -27,6 +27,20 @@ If the user asks for a build plan, you respond with a crisp plan and then ask a 
 const apiKeyStorage = "ozzgpt:apiKey";
 const userStorage = "ozzgpt:user";
 
+declare global {
+  interface Window {
+    puter?: {
+      ai?: {
+        chat: (
+          prompt: string,
+          options?: { model?: string },
+        ) => Promise<string>;
+      };
+      print?: (message: string) => void;
+    };
+  }
+}
+
 export default function AppPage() {
   const router = useRouter();
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -66,6 +80,9 @@ export default function AppPage() {
   const [creatingJob, setCreatingJob] = useState(false);
   const [jobId, setJobId] = useState("");
   const [jobStatus, setJobStatus] = useState("");
+  const [puterResponse, setPuterResponse] = useState("");
+  const [puterError, setPuterError] = useState<string | null>(null);
+  const [puterLoading, setPuterLoading] = useState(false);
 
   const endRef = useRef<HTMLDivElement | null>(null);
   const draftKey = "unlockedgpt:prompt";
@@ -314,6 +331,32 @@ export default function AppPage() {
     router.replace("/login");
   };
 
+  const runPuterDemo = async () => {
+    setPuterError(null);
+    setPuterResponse("");
+    if (!window.puter?.ai?.chat) {
+      setPuterError("Puter SDK not available.");
+      return;
+    }
+    setPuterLoading(true);
+    try {
+      const response = await window.puter.ai.chat(
+        "What are the benefits of exercise?",
+        { model: "gpt-5-nano" },
+      );
+      setPuterResponse(response);
+      if (window.puter.print) {
+        window.puter.print(response);
+      }
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Puter request failed.";
+      setPuterError(message);
+    } finally {
+      setPuterLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen px-6 py-10 md:px-12">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-10">
@@ -554,6 +597,32 @@ export default function AppPage() {
                 <li>Define what the assistant should refuse or avoid.</li>
                 <li>Give a 3-5 line example of the ideal response style.</li>
               </ul>
+            </section>
+
+            <section className="rounded-3xl border border-[var(--border)] bg-white/80 p-6 shadow-[var(--shadow)]">
+              <h3 className="text-lg font-semibold text-[var(--ink)]">
+                Puter AI Demo
+              </h3>
+              <p className="mt-2 text-sm text-[var(--muted)]">
+                Runs a sample call through the Puter SDK.
+              </p>
+              <button
+                className="mt-4 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                onClick={runPuterDemo}
+                disabled={puterLoading}
+              >
+                {puterLoading ? "Running..." : "Run Demo"}
+              </button>
+              {puterResponse && (
+                <div className="mt-3 rounded-2xl border border-[var(--border)] bg-white/90 px-3 py-2 text-xs text-[var(--muted)]">
+                  {puterResponse}
+                </div>
+              )}
+              {puterError && (
+                <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">
+                  {puterError}
+                </p>
+              )}
             </section>
           </aside>
         </main>

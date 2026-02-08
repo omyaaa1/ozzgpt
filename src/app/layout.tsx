@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { Fraunces, Sora } from "next/font/google";
 import "./globals.css";
 
@@ -27,6 +28,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        <Script src="https://js.puter.com/v2/" strategy="beforeInteractive" />
+      </head>
       <body className={`${sora.variable} ${fraunces.variable} antialiased`}>
         {children}
       </body>
