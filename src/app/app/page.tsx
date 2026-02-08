@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -20,11 +21,105 @@ type TrainingExample = {
   assistant: string;
 };
 
+type ProviderType =
+  | "openai_compat"
+  | "anthropic"
+  | "gemini"
+  | "cohere"
+  | "ollama";
+
+type Provider = {
+  id: string;
+  name: string;
+  type: ProviderType;
+  defaultBaseUrl?: string;
+  needsKey: boolean;
+};
+
+const providers: Provider[] = [
+  { id: "openai", name: "OpenAI", type: "openai_compat", needsKey: true },
+  {
+    id: "openrouter",
+    name: "OpenRouter (gateway)",
+    type: "openai_compat",
+    defaultBaseUrl: "https://openrouter.ai/api/v1",
+    needsKey: true,
+  },
+  {
+    id: "groq",
+    name: "Groq",
+    type: "openai_compat",
+    defaultBaseUrl: "https://api.groq.com/openai/v1",
+    needsKey: true,
+  },
+  {
+    id: "together",
+    name: "Together",
+    type: "openai_compat",
+    defaultBaseUrl: "https://api.together.xyz/v1",
+    needsKey: true,
+  },
+  {
+    id: "fireworks",
+    name: "Fireworks",
+    type: "openai_compat",
+    defaultBaseUrl: "https://api.fireworks.ai/inference/v1",
+    needsKey: true,
+  },
+  {
+    id: "deepseek",
+    name: "DeepSeek",
+    type: "openai_compat",
+    defaultBaseUrl: "https://api.deepseek.com/v1",
+    needsKey: true,
+  },
+  {
+    id: "mistral",
+    name: "Mistral",
+    type: "openai_compat",
+    defaultBaseUrl: "https://api.mistral.ai/v1",
+    needsKey: true,
+  },
+  {
+    id: "anthropic",
+    name: "Anthropic (Claude)",
+    type: "anthropic",
+    needsKey: true,
+  },
+  {
+    id: "gemini",
+    name: "Google Gemini",
+    type: "gemini",
+    needsKey: true,
+  },
+  {
+    id: "cohere",
+    name: "Cohere",
+    type: "cohere",
+    needsKey: true,
+  },
+  {
+    id: "ollama",
+    name: "Ollama (local)",
+    type: "ollama",
+    defaultBaseUrl: "http://localhost:11434",
+    needsKey: false,
+  },
+  {
+    id: "custom",
+    name: "Custom (OpenAI-compatible)",
+    type: "openai_compat",
+    needsKey: true,
+  },
+];
+
 const defaultPrompt = `You are UnlockedGPT, a calm, direct assistant.
 You speak with confident brevity and give actionable steps.
 If the user asks for a build plan, you respond with a crisp plan and then ask a concrete question.`;
 
-const apiKeyStorage = "ozzgpt:apiKey";
+const providerKeyStorage = "ozzgpt:providerKeys";
+const providerBaseStorage = "ozzgpt:providerBases";
+const providerChoiceStorage = "ozzgpt:providerChoice";
 const userStorage = "ozzgpt:user";
 
 declare global {
@@ -47,7 +142,7 @@ export default function AppPage() {
     {
       role: "assistant",
       content:
-        "Welcome to UnlockedGPT. Drop your prompt, and tune the system instructions on the right.",
+        "Welcome to OZZGPT. Select a provider, add your key, and prompt away.",
     },
   ]);
   const [input, setInput] = useState("");
@@ -59,7 +154,13 @@ export default function AppPage() {
   const [hasServerKey, setHasServerKey] = useState<boolean | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
 
-  const [apiKey, setApiKey] = useState("");
+  const [providerId, setProviderId] = useState("openai");
+  const [providerKeys, setProviderKeys] = useState<Record<string, string>>({});
+  const [providerBases, setProviderBases] = useState<Record<string, string>>(
+    {},
+  );
+  const [keyInput, setKeyInput] = useState("");
+  const [baseInput, setBaseInput] = useState("");
   const [showKeyModal, setShowKeyModal] = useState(false);
 
   const [presetName, setPresetName] = useState("");
@@ -70,7 +171,7 @@ export default function AppPage() {
       id: "example-1",
       user: "Explain the project architecture in 3 bullets.",
       assistant:
-        "The UI is a Next.js client page.\nThe server routes handle OpenAI requests.\nPrompt settings live in local storage.",
+        "The UI is a Next.js client page.\nThe server routes handle provider requests.\nPrompt settings live in local storage.",
     },
   ]);
   const [uploading, setUploading] = useState(false);
@@ -80,6 +181,7 @@ export default function AppPage() {
   const [creatingJob, setCreatingJob] = useState(false);
   const [jobId, setJobId] = useState("");
   const [jobStatus, setJobStatus] = useState("");
+
   const [puterResponse, setPuterResponse] = useState("");
   const [puterError, setPuterError] = useState<string | null>(null);
   const [puterLoading, setPuterLoading] = useState(false);
@@ -88,11 +190,24 @@ export default function AppPage() {
   const draftKey = "unlockedgpt:prompt";
   const presetKey = "unlockedgpt:presets";
 
+  const currentProvider = providers.find(
+    (provider) => provider.id === providerId,
+  );
+  const activeKey = providerKeys[providerId] || "";
+  const needsKey = currentProvider?.needsKey ?? true;
+
   useEffect(() => {
-    const stored = window.localStorage.getItem(draftKey);
-    if (stored) {
-      setSystemPrompt(stored);
+    const storedUser = window.localStorage.getItem(userStorage);
+    if (!storedUser) {
+      router.replace("/login");
+      return;
     }
+
+    const storedPrompt = window.localStorage.getItem(draftKey);
+    if (storedPrompt) {
+      setSystemPrompt(storedPrompt);
+    }
+
     const storedPresets = window.localStorage.getItem(presetKey);
     if (storedPresets) {
       try {
@@ -102,16 +217,28 @@ export default function AppPage() {
         setPresets([]);
       }
     }
-    const storedKey = window.localStorage.getItem(apiKeyStorage);
-    if (storedKey) {
-      setApiKey(storedKey);
-      setShowKeyModal(false);
-    } else {
-      setShowKeyModal(true);
+
+    const storedProvider = window.localStorage.getItem(providerChoiceStorage);
+    if (storedProvider) {
+      setProviderId(storedProvider);
     }
-    const storedUser = window.localStorage.getItem(userStorage);
-    if (!storedUser) {
-      router.replace("/login");
+
+    const storedKeys = window.localStorage.getItem(providerKeyStorage);
+    if (storedKeys) {
+      try {
+        setProviderKeys(JSON.parse(storedKeys) as Record<string, string>);
+      } catch {
+        setProviderKeys({});
+      }
+    }
+
+    const storedBases = window.localStorage.getItem(providerBaseStorage);
+    if (storedBases) {
+      try {
+        setProviderBases(JSON.parse(storedBases) as Record<string, string>);
+      } catch {
+        setProviderBases({});
+      }
     }
   }, [router]);
 
@@ -122,6 +249,33 @@ export default function AppPage() {
   useEffect(() => {
     window.localStorage.setItem(presetKey, JSON.stringify(presets));
   }, [presets]);
+
+  useEffect(() => {
+    window.localStorage.setItem(providerChoiceStorage, providerId);
+    setKeyInput(providerKeys[providerId] || "");
+    setBaseInput(
+      providerBases[providerId] || currentProvider?.defaultBaseUrl || "",
+    );
+  }, [
+    providerId,
+    providerKeys,
+    providerBases,
+    currentProvider?.defaultBaseUrl,
+  ]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      providerKeyStorage,
+      JSON.stringify(providerKeys),
+    );
+  }, [providerKeys]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      providerBaseStorage,
+      JSON.stringify(providerBases),
+    );
+  }, [providerBases]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -143,6 +297,18 @@ export default function AppPage() {
     };
     void checkHealth();
   }, []);
+
+  useEffect(() => {
+    if (needsKey && !activeKey && providerId !== "openai") {
+      setShowKeyModal(true);
+      return;
+    }
+    if (providerId === "openai" && !activeKey && !hasServerKey) {
+      setShowKeyModal(true);
+      return;
+    }
+    setShowKeyModal(false);
+  }, [providerId, activeKey, needsKey, hasServerKey]);
 
   const canSend = useMemo(
     () => input.trim().length > 0 && !loading,
@@ -180,7 +346,9 @@ export default function AppPage() {
           systemPrompt,
           model,
           temperature,
-          apiKey: apiKey || undefined,
+          provider: providerId,
+          apiKey: activeKey || undefined,
+          baseUrl: baseInput || undefined,
         }),
       });
 
@@ -270,7 +438,7 @@ export default function AppPage() {
       const response = await fetch("/api/fine-tune/upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jsonl, apiKey: apiKey || undefined }),
+        body: JSON.stringify({ jsonl, apiKey: providerKeys.openai || undefined }),
       });
       const data = await response.json();
       if (!response.ok) {
@@ -296,7 +464,7 @@ export default function AppPage() {
         body: JSON.stringify({
           trainingFileId: trainingFileId.trim(),
           model: fineTuneModel.trim(),
-          apiKey: apiKey || undefined,
+          apiKey: providerKeys.openai || undefined,
         }),
       });
       const data = await response.json();
@@ -315,15 +483,28 @@ export default function AppPage() {
   };
 
   const handleSaveKey = () => {
-    if (!apiKey.trim()) return;
-    window.localStorage.setItem(apiKeyStorage, apiKey.trim());
+    if (!keyInput.trim()) return;
+    setProviderKeys((prev) => ({
+      ...prev,
+      [providerId]: keyInput.trim(),
+    }));
     setShowKeyModal(false);
   };
 
+  const handleSaveBase = () => {
+    if (!baseInput.trim()) return;
+    setProviderBases((prev) => ({
+      ...prev,
+      [providerId]: baseInput.trim(),
+    }));
+  };
+
   const handleClearKey = () => {
-    window.localStorage.removeItem(apiKeyStorage);
-    setApiKey("");
-    setShowKeyModal(true);
+    setProviderKeys((prev) => {
+      const next = { ...prev };
+      delete next[providerId];
+      return next;
+    });
   };
 
   const handleSignOut = () => {
@@ -356,45 +537,42 @@ export default function AppPage() {
       setPuterLoading(false);
     }
   };
-
   return (
     <div className="min-h-screen px-6 py-10 md:px-12">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-10">
         <header className="flex flex-col gap-6 rounded-3xl border border-[var(--border)] bg-[var(--panel)] px-8 py-10 shadow-[var(--shadow)]">
           <div className="flex flex-col gap-3">
             <span className="w-fit rounded-full border border-[var(--border)] bg-white/70 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">
-              Prompt Trained Interface
+              Multi-Provider Console
             </span>
             <h1 className="text-4xl font-semibold tracking-tight text-[var(--ink)] md:text-5xl">
-              UnlockedGPT Interface Layer
+              OZZGPT Interface Layer
             </h1>
             <p className="max-w-2xl text-base text-[var(--muted)] md:text-lg">
-              A human-crafted application layer for ChatGPT. Tune behavior with
-              your prompt, ship an elegant GitHub-ready interface, and iterate
-              fast.
+              Connect your API keys across the top providers. Switch models in
+              seconds. Keep prompt training centralized.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3 text-sm text-[var(--muted)]">
             <span className="rounded-full border border-[var(--border)] bg-white/70 px-3 py-1">
-              Built with Next.js + Tailwind
+              BYOK + server key
             </span>
             <span className="rounded-full border border-[var(--border)] bg-white/70 px-3 py-1">
-              OpenAI API Route
+              10+ providers
             </span>
             <span className="rounded-full border border-[var(--border)] bg-white/70 px-3 py-1">
-              Local Prompt Memory
-            </span>
-            <span className="rounded-full border border-[var(--border)] bg-white/70 px-3 py-1">
-              Fine-tune Dataset Builder
+              Fine-tune studio
             </span>
             <span
               className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${
-                apiKey
+                activeKey || (providerId === "openai" && hasServerKey)
                   ? "bg-emerald-500 text-white"
                   : "bg-amber-500 text-white"
               }`}
             >
-              {apiKey ? "BYOK Active" : "BYOK Missing"}
+              {activeKey || (providerId === "openai" && hasServerKey)
+                ? "Key Ready"
+                : "Key Missing"}
             </span>
             <button
               className="rounded-full border border-[var(--border)] bg-white/70 px-3 py-1 text-xs font-semibold text-[var(--muted)]"
@@ -411,6 +589,97 @@ export default function AppPage() {
           </div>
         </header>
 
+        <section className="rounded-3xl border border-[var(--border)] bg-white/80 p-6 shadow-[var(--shadow)]">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h2 className="text-xl font-semibold text-[var(--ink)]">
+                Provider Vault
+              </h2>
+              <p className="mt-1 text-sm text-[var(--muted)]">
+                Select a provider, add your key, and pick a model. Keys are
+                stored locally in your browser.
+              </p>
+            </div>
+            <div className="text-xs text-[var(--muted)]">
+              OpenAI server key: {hasServerKey ? "available" : "not set"}
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_1fr]">
+            <div className="grid gap-3">
+              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">
+                Provider
+              </label>
+              <select
+                className="rounded-2xl border border-[var(--border)] bg-white px-3 py-2 text-sm text-[var(--ink)]"
+                value={providerId}
+                onChange={(event) => setProviderId(event.target.value)}
+              >
+                {providers.map((provider) => (
+                  <option key={provider.id} value={provider.id}>
+                    {provider.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid gap-3">
+              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">
+                Model
+              </label>
+              <input
+                className="rounded-2xl border border-[var(--border)] bg-white px-3 py-2 text-sm text-[var(--ink)]"
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+                placeholder="gpt-4.1-mini"
+              />
+            </div>
+
+            <div className="grid gap-3">
+              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">
+                API Key
+              </label>
+              <input
+                className="rounded-2xl border border-[var(--border)] bg-white px-3 py-2 text-sm text-[var(--ink)]"
+                type="password"
+                placeholder={needsKey ? "paste your key" : "not required"}
+                value={keyInput}
+                onChange={(event) => setKeyInput(event.target.value)}
+              />
+              <button
+                className="w-fit rounded-full bg-[var(--accent)] px-4 py-2 text-xs font-semibold text-white"
+                onClick={handleSaveKey}
+              >
+                Save Key
+              </button>
+            </div>
+
+            <div className="grid gap-3">
+              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">
+                Base URL
+              </label>
+              <input
+                className="rounded-2xl border border-[var(--border)] bg-white px-3 py-2 text-sm text-[var(--ink)]"
+                value={baseInput}
+                onChange={(event) => setBaseInput(event.target.value)}
+                placeholder={currentProvider?.defaultBaseUrl || "custom base url"}
+              />
+              <button
+                className="w-fit rounded-full border border-[var(--border)] bg-white px-4 py-2 text-xs font-semibold text-[var(--ink)]"
+                onClick={handleSaveBase}
+              >
+                Save Base URL
+              </button>
+            </div>
+          </div>
+
+          {healthError && (
+            <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              {healthError}
+            </p>
+          )}
+        </section>
+
         <main className="grid gap-8 lg:grid-cols-[1.3fr_0.7fr]">
           <section className="flex h-full flex-col rounded-3xl border border-[var(--border)] bg-white/70 p-6 shadow-[var(--shadow)] backdrop-blur">
             <div className="flex items-center justify-between border-b border-[var(--border)] pb-4">
@@ -419,7 +688,7 @@ export default function AppPage() {
                   Dialogue
                 </h2>
                 <p className="text-sm text-[var(--muted)]">
-                  The assistant responds using your prompt settings.
+                  Responses come from the selected provider.
                 </p>
               </div>
               <span className="rounded-full bg-[var(--accent)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-white">
@@ -491,40 +760,16 @@ export default function AppPage() {
                     Prompt Studio
                   </h3>
                   <p className="mt-1 text-sm text-[var(--muted)]">
-                    This is your training layer. Edit the system prompt to shape
-                    tone, rules, and output quality.
+                    Edit the system prompt to shape tone, rules, and output.
                   </p>
                 </div>
-                <span
-                  className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${
-                    hasServerKey
-                      ? "bg-emerald-500 text-white"
-                      : "bg-amber-500 text-white"
-                  }`}
-                >
-                  {hasServerKey ? "Server Key" : "No Server Key"}
-                </span>
               </div>
-              {healthError && (
-                <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                  {healthError}
-                </p>
-              )}
               <textarea
                 className="mt-4 min-h-[200px] w-full rounded-2xl border border-[var(--border)] bg-white/80 p-3 text-sm text-[var(--ink)] outline-none"
                 value={systemPrompt}
                 onChange={(event) => setSystemPrompt(event.target.value)}
               />
               <div className="mt-4 grid gap-3">
-                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">
-                  Model
-                </label>
-                <input
-                  className="rounded-2xl border border-[var(--border)] bg-white/80 px-3 py-2 text-sm text-[var(--ink)]"
-                  value={model}
-                  onChange={(event) => setModel(event.target.value)}
-                  placeholder="gpt-4.1-mini"
-                />
                 <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">
                   Temperature
                 </label>
@@ -535,7 +780,9 @@ export default function AppPage() {
                   max={1}
                   step={0.05}
                   value={temperature}
-                  onChange={(event) => setTemperature(Number(event.target.value))}
+                  onChange={(event) =>
+                    setTemperature(Number(event.target.value))
+                  }
                 />
                 <div className="text-sm text-[var(--muted)]">
                   Current: {temperature.toFixed(2)}
@@ -626,16 +873,15 @@ export default function AppPage() {
             </section>
           </aside>
         </main>
-
         <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-6 shadow-[var(--shadow)]">
           <div className="flex flex-wrap items-start justify-between gap-4 border-b border-[var(--border)] pb-4">
             <div>
               <h2 className="text-2xl font-semibold text-[var(--ink)]">
-                Fine-tune Studio
+                Fine-tune Studio (OpenAI)
               </h2>
               <p className="mt-1 text-sm text-[var(--muted)]">
                 Build a JSONL dataset, upload it to OpenAI, and create a
-                fine-tune job.
+                fine-tune job. Requires an OpenAI key.
               </p>
             </div>
             <button
@@ -759,17 +1005,17 @@ export default function AppPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <div className="w-full max-w-lg rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-6 shadow-[var(--shadow)]">
             <h2 className="text-xl font-semibold text-[var(--ink)]">
-              Add Your OpenAI API Key
+              Add your API key
             </h2>
             <p className="mt-2 text-sm text-[var(--muted)]">
-              Your key stays in your browser storage. The app sends it to the
-              server only for OpenAI requests.
+              Your key stays in browser storage. It is only used to send
+              provider requests.
             </p>
             <input
               className="mt-4 w-full rounded-2xl border border-[var(--border)] bg-white/90 px-3 py-2 text-sm text-[var(--ink)]"
-              placeholder="sk-..."
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
+              placeholder="paste your key"
+              value={keyInput}
+              onChange={(event) => setKeyInput(event.target.value)}
             />
             <div className="mt-4 flex flex-wrap gap-2">
               <button
