@@ -28,7 +28,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const client = getOpenAIClient(body.apiKey);
+    const client = getOpenAIClient({ apiKey: body.apiKey });
     const job = await client.fineTuning.jobs.create({
       training_file: body.trainingFileId.trim(),
       model: body.model.trim(),

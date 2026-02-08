@@ -33,7 +33,7 @@ export async function POST(req: Request) {
 
   try {
     await fs.writeFile(filePath, body.jsonl, "utf8");
-    const client = getOpenAIClient(body.apiKey);
+    const client = getOpenAIClient({ apiKey: body.apiKey });
     const file = await client.files.create({
       file: createReadStream(filePath),
       purpose: "fine-tune",
